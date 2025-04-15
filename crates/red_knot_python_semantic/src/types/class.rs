@@ -297,10 +297,15 @@ impl<'db> ClassType<'db> {
     /// Returns [`Symbol::Unbound`] if `name` cannot be found in this class's scope
     /// directly. Use [`ClassType::class_member`] if you require a method that will
     /// traverse through the MRO until it finds the member.
-    pub(super) fn own_class_member(self, db: &'db dyn Db, name: &str) -> SymbolAndQualifiers<'db> {
+    pub(super) fn own_class_member(
+        self,
+        db: &'db dyn Db,
+        specialization: Option<Specialization<'db>>,
+        name: &str,
+    ) -> SymbolAndQualifiers<'db> {
         let (class_literal, _) = self.class_literal(db);
         class_literal
-            .own_class_member(db, name)
+            .own_class_member(db, specialization, name)
             .map_type(|ty| self.specialize_type(db, ty))
     }
 
@@ -745,7 +750,8 @@ impl<'db> ClassLiteralType<'db> {
                     }
 
                     lookup_result = lookup_result.or_else(|lookup_error| {
-                        lookup_error.or_fall_back_to(db, class.own_class_member(db, name))
+                        lookup_error
+                            .or_fall_back_to(db, class.own_class_member(db, specialization, name))
                     });
                 }
             }
@@ -790,23 +796,38 @@ impl<'db> ClassLiteralType<'db> {
     /// Returns [`Symbol::Unbound`] if `name` cannot be found in this class's scope
     /// directly. Use [`ClassLiteralType::class_member`] if you require a method that will
     /// traverse through the MRO until it finds the member.
-    pub(super) fn own_class_member(self, db: &'db dyn Db, name: &str) -> SymbolAndQualifiers<'db> {
+    pub(super) fn own_class_member(
+        self,
+        db: &'db dyn Db,
+        specialization: Option<Specialization<'db>>,
+        name: &str,
+    ) -> SymbolAndQualifiers<'db> {
         if let Some(metadata) = self.dataclass_metadata(db) {
-            if name == "__init__" {
-                if metadata.contains(DataclassMetadata::INIT) {
-                    // TODO: Generate the signature from the attributes on the class
-                    let init_signature = Signature::new(
-                        Parameters::new([
-                            Parameter::variadic(Name::new_static("args"))
-                                .with_annotated_type(Type::any()),
-                            Parameter::keyword_variadic(Name::new_static("kwargs"))
-                                .with_annotated_type(Type::any()),
-                        ]),
-                        Some(Type::none(db)),
-                    );
+            if name == "__init__" && metadata.contains(DataclassMetadata::INIT) {
+                // TODO: Generate the signature from the attributes on the class
+                let init_signature = Signature::new(
+                    Parameters::new([
+                        Parameter::variadic(Name::new_static("args"))
+                            .with_annotated_type(Type::any()),
+                        Parameter::keyword_variadic(Name::new_static("kwargs"))
+                            .with_annotated_type(Type::any()),
+                    ]),
+                    Some(Type::none(db)),
+                );
 
-                    return Symbol::bound(Type::Callable(CallableType::new(db, init_signature)))
-                        .into();
+                return Symbol::bound(Type::Callable(CallableType::new(db, init_signature))).into();
+            } else if matches!(name, "__lt__" | "__le__" | "__gt__" | "__ge__") {
+                if metadata.contains(DataclassMetadata::ORDER) {
+                    let signature = Signature::new(
+                        Parameters::new([Parameter::positional_or_keyword(Name::new_static(
+                            "other",
+                        ))
+                        .with_annotated_type(Type::instance(
+                            self.apply_optional_specialization(db, specialization),
+                        ))]),
+                        Some(KnownClass::Bool.to_instance(db)),
+                    );
+                    return Symbol::bound(Type::Callable(CallableType::new(db, signature))).into();
                 }
             }
         }

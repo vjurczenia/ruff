@@ -9,7 +9,7 @@ use crate::types::{
 use crate::Db;
 
 /// A list of formal type variables for a generic function, class, or type alias.
-#[salsa::tracked(debug)]
+#[salsa::interned(debug)]
 pub struct GenericContext<'db> {
     #[return_ref]
     pub(crate) variables: Box<[TypeVarInstance<'db>]>,
@@ -21,7 +21,7 @@ impl<'db> GenericContext<'db> {
         index: &'db SemanticIndex<'db>,
         type_params_node: &ast::TypeParams,
     ) -> Self {
-        let variables = type_params_node
+        let variables: Box<[_]> = type_params_node
             .iter()
             .filter_map(|type_param| Self::variable_from_type_param(db, index, type_param))
             .collect();
@@ -100,7 +100,7 @@ impl<'db> GenericContext<'db> {
 }
 
 /// An assignment of a specific type to each type variable in a generic scope.
-#[salsa::tracked(debug)]
+#[salsa::interned(debug)]
 pub struct Specialization<'db> {
     pub(crate) generic_context: GenericContext<'db>,
     #[return_ref]
@@ -122,7 +122,7 @@ impl<'db> Specialization<'db> {
     /// That lets us produce the generic alias `A[int]`, which is the corresponding entry in the
     /// MRO of `B[int]`.
     pub(crate) fn apply_specialization(self, db: &'db dyn Db, other: Specialization<'db>) -> Self {
-        let types = self
+        let types: Box<[_]> = self
             .types(db)
             .into_iter()
             .map(|ty| ty.apply_specialization(db, other))
@@ -131,7 +131,7 @@ impl<'db> Specialization<'db> {
     }
 
     pub(crate) fn normalized(self, db: &'db dyn Db) -> Self {
-        let types = self.types(db).iter().map(|ty| ty.normalized(db)).collect();
+        let types: Box<[_]> = self.types(db).iter().map(|ty| ty.normalized(db)).collect();
         Self::new(db, self.generic_context(db), types)
     }
 
